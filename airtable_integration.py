@@ -238,172 +238,6 @@ def format_record_for_airtable(record: Dict) -> Dict:
     return {'fields': fields}
 
 
-def update_airtable_with_results(records: List[Dict], table_name: str = None) -> bool:
-    """
-    Upload deduplication results to Airtable table.
-    
-    This is the main function for uploading processed deduplication results back to
-    Airtable. It handles table validation, record formatting, and batch processing
-    to efficiently upload large datasets while respecting Airtable's API limits.
-    
-    Args:
-        records (List[Dict]): List of record dictionaries to upload
-        table_name (str, optional): Target table name (defaults to "Deduplicated_Results")
-    
-    Returns:
-        bool: True if upload was successful, False otherwise
-    
-    Features:
-        - Validates table existence before upload
-        - Processes records in batches of 10 (Airtable API limit)
-        - Handles URL encoding for table names with spaces
-        - Comprehensive error handling and logging
-        - Uses table ID for "Deduplicated_Results" for reliability
-    """
-    if not validate_airtable_config():
-        return False
-    
-    # Use table name directly (same approach as get_airtable_table_info)
-    table = table_name or "Deduplicated_Results"
-    url = f"{AIRTABLE_API_URL}/{table}"
-    
-    # Debug logging to see exact URL being used
-    logger.info(f"DEBUG: AIRTABLE_BASE_ID = {AIRTABLE_BASE_ID}")
-    logger.info(f"DEBUG: AIRTABLE_API_URL = {AIRTABLE_API_URL}")
-    logger.info(f"DEBUG: Final URL = {url}")
-    
-    try:
-        logger.info(f"Updating Airtable table {table} with {len(records)} records")
-        
-        # looging to check if the table exists by trying to get its info
-        try:
-            logger.info(f"Checking if table '{table}' exists at URL: {url}")
-            check_response = requests.get(url, headers=AIRTABLE_HEADERS, params={'maxRecords': 1})
-            logger.info(f"Table check response status: {check_response.status_code}")
-            logger.info(f"Table check response text: {check_response.text[:200]}...")
-            
-            if check_response.status_code == 404:
-                logger.error(f"Table '{table}' does not exist in Airtable")
-                logger.info("Please create the 'Deduplicated_Results' table manually in Airtable")
-                return False
-            elif check_response.status_code != 200:
-                logger.error(f"Unexpected status code when checking table: {check_response.status_code}")
-                logger.error(f"Response: {check_response.text}")
-                return False
-            else:
-                logger.info(f"Table '{table}' exists and is accessible")
-        except Exception as e:
-            logger.error(f"Error checking table existence: {str(e)}")
-            return False
-        
-        # Format records for Airtable using the formatting function
-        formatted_records = []
-        for record in records:
-            formatted_record = format_record_for_airtable(record)
-            formatted_records.append(formatted_record)
-        
-        # Airtable API allows up to 10 records per request
-        batch_size = 10
-        success_count = 0
-        
-        # Process records in batches to respect API limits
-        for i in range(0, len(formatted_records), batch_size):
-            batch = formatted_records[i:i + batch_size]
-            
-            payload = {'records': batch}
-            
-            response = requests.post(url, headers=AIRTABLE_HEADERS, json=payload)
-            response.raise_for_status()
-            
-            success_count += len(batch)
-            logger.info(f"Successfully created {len(batch)} records in batch")
-        
-        logger.info(f"Successfully updated Airtable with {success_count} records")
-        return True
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error updating Airtable: {str(e)}")
-        if hasattr(e, 'response') and e.response is not None:
-            logger.error(f"Response status code: {e.response.status_code}")
-            logger.error(f"Response text: {e.response.text}")
-        return False
-
-def clear_airtable_table(table_name: str = None) -> bool:
-    """
-    Clear all records from an Airtable table.
-    
-    This function removes all records from the specified table, useful for starting
-    fresh with new deduplication results. It handles the deletion process in batches
-    to respect Airtable's API limits and provides comprehensive error handling.
-    
-    Args:
-        table_name (str, optional): Name of the table to clear (defaults to "Deduplicated_Results")
-    
-    Returns:
-        bool: True if table was successfully cleared, False otherwise
- 
-    """
-    if not validate_airtable_config():
-        return False
-    
-    table = table_name or "Deduplicated_Results"
-    url = f"{AIRTABLE_API_URL}/{table}"
-    
-    try:
-        # First, get all record IDs that need to be deleted
-        response = requests.get(url, headers=AIRTABLE_HEADERS)
-        response.raise_for_status()
-        
-        data = response.json()
-        records = data.get('records', [])
-        
-        if not records:
-            logger.info("Table is already empty")
-            return True
-        
-        # Delete records in batches to respect API limits
-        record_ids = [record['id'] for record in records]
-        batch_size = 10
-        
-        for i in range(0, len(record_ids), batch_size):
-            batch_ids = record_ids[i:i + batch_size]
-            
-            for record_id in batch_ids:
-                delete_url = f"{url}/{record_id}"
-                response = requests.delete(delete_url, headers=AIRTABLE_HEADERS)
-                response.raise_for_status()
-        
-        logger.info(f"Successfully cleared {len(record_ids)} records from table")
-        return True
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error clearing Airtable table: {str(e)}")
-        return False
-
-def handle_airtable_error(error: Exception) -> Dict:
-    """
-    Handle and log Airtable API errors with structured error information.
-    
-    This function provides consistent error handling across the module by capturing
-    error details, timestamps, and error types. It's used to standardize error
-    reporting and facilitate debugging.
-    
-    Args:
-        error (Exception): The exception that occurred during Airtable operations
-    
-    Returns:
-        Dict: Structured error information including message, timestamp, and error type
-        
-    """
-    error_info = {
-        'error': str(error),
-        'timestamp': datetime.now().isoformat(),
-        'type': type(error).__name__
-    }
-    
-    logger.error(f"Airtable API error: {error_info}")
-    
-    return error_info
 
 def get_airtable_table_info(table_name: str = None) -> Dict:
     """
@@ -536,107 +370,14 @@ def convert_airtable_to_dataframe_format(records: List[Dict]) -> List[Dict]:
                 converted_record[field_name] = field_value
                 logger.debug(f"Preserved linked record field '{field_name}': {field_value}")
         
+        # Process checkbox fields to convert linked records to event names
+        converted_record = process_checkbox_fields(converted_record)
+        
         converted_records.append(converted_record)
     
     return converted_records
 
-def process_airtable_deduplication() -> Dict:
-    """
-    Main orchestrator function for Airtable-based deduplication process.
-    
-    This function serves as the primary entry point for Airtable deduplication.
-    It coordinates the entire process: fetching records from Airtable, converting
-    them to the appropriate format, and returning them for processing by the
-    deduplication pipeline.
-    
-    Returns:
-        Dict: Result dictionary containing success status, records, and count.
-              On error, contains error information and details.
-              
-    Process Flow:
-        1. Fetch records from "All Providers" table
-        2. Convert records to DataFrame-compatible format
-        3. Return records for deduplication processing
-        4. Handle errors and provide detailed error information
-    
-    """
-    try:
-        logger.info("Starting Airtable deduplication process")
-        
-        # Step 1: Fetch records from "All Providers" table
-        airtable_records = fetch_airtable_records()
-        if not airtable_records:
-            return {'error': 'No records found in Airtable table'}
-        
-        converted_records = convert_airtable_to_dataframe_format(airtable_records)
-        return {
-            'success': True,
-            'records': converted_records,
-            'count': len(converted_records)
-        }
-        
-    except Exception as e:
-        error_info = handle_airtable_error(e)
-        return {'error': str(e), 'details': error_info} 
 
-def test_deduplicated_results_table_access() -> Dict:
-    """
-    Test function to verify access to the Deduplicated_Results table.
-    
-    This function specifically tests the same URL construction and access pattern
-    used by update_airtable_with_results to help debug table access issues.
-    
-    Returns:
-        Dict: Test results including success status and details
-    """
-    if not validate_airtable_config():
-        return {'success': False, 'error': 'Invalid configuration'}
-    
-    table = "Deduplicated_Results"
-    url = f"{AIRTABLE_API_URL}/{table}"
-    
-    try:
-        logger.info(f"Testing table access for: {table}")
-        logger.info(f"URL: {url}")
-        logger.info(f"DEBUG: AIRTABLE_BASE_ID = {AIRTABLE_BASE_ID}")
-        logger.info(f"DEBUG: AIRTABLE_API_URL = {AIRTABLE_API_URL}")
-        
-        # Test GET request (same as table existence check)
-        response = requests.get(url, headers=AIRTABLE_HEADERS, params={'maxRecords': 1})
-        logger.info(f"Response status: {response.status_code}")
-        logger.info(f"Response text: {response.text[:500]}...")
-        
-        if response.status_code == 200:
-            data = response.json()
-            records = data.get('records', [])
-            fields = list(records[0].get('fields', {}).keys()) if records else []
-            
-            return {
-                'success': True,
-                'table_name': table,
-                'url': url,
-                'record_count': len(records),
-                'fields': fields,
-                'message': 'Table access successful'
-            }
-        else:
-            return {
-                'success': False,
-                'table_name': table,
-                'url': url,
-                'status_code': response.status_code,
-                'response_text': response.text,
-                'error': f'HTTP {response.status_code}: {response.text}'
-            }
-            
-    except Exception as e:
-        return {
-            'success': False,
-            'table_name': table,
-            'url': url,
-            'error': str(e),
-            'exception_type': type(e).__name__
-        } 
 
 def configure_linked_record_fields(field_names: List[str]) -> None:
     """
@@ -660,6 +401,110 @@ def get_linked_record_fields() -> Set[str]:
         Set[str]: Set of field names configured as linked records
     """
     return LINKED_RECORD_FIELDS.copy()
+
+def get_event_names_from_ids(event_ids: List[str]) -> List[str]:
+    """
+    Convert linked record IDs to event names by querying the Events table.
+    
+    Args:
+        event_ids (List[str]): List of linked record IDs (e.g., ['rec123', 'rec456'])
+    
+    Returns:
+        List[str]: List of event names
+    """
+    if not event_ids or not validate_airtable_config():
+        return []
+    
+    event_names = []
+    
+    try:
+        # Query the Events table for each event ID
+        for event_id in event_ids:
+            if event_id.startswith('rec'):  # Valid Airtable record ID
+                url = f"{AIRTABLE_API_URL}/Events/{event_id}"
+                response = requests.get(url, headers=AIRTABLE_HEADERS)
+                
+                if response.status_code == 200:
+                    event_data = response.json()
+                    event_name = event_data.get('fields', {}).get('Event Name', '')
+                    if event_name:
+                        event_names.append(event_name)
+                else:
+                    logger.warning(f"Could not fetch event with ID {event_id}: {response.status_code}")
+        
+        logger.info(f"Converted {len(event_ids)} event IDs to {len(event_names)} event names")
+        return event_names
+        
+    except Exception as e:
+        logger.error(f"Error converting event IDs to names: {str(e)}")
+        return []
+
+def process_checkbox_fields(record: Dict) -> Dict:
+    """
+    Process checkbox fields and convert boolean values to event names from linked records.
+    
+    Args:
+        record (Dict): Record with checkbox fields
+    
+    Returns:
+        Dict: Record with processed checkbox fields
+    """
+    processed_record = record.copy()
+    
+    # Get the linked events from the record (these contain actual event names)
+    linked_events = record.get('Events', [])  # "Events" column with linked records
+    if isinstance(linked_events, list) and all(isinstance(item, str) and item.startswith('rec') for item in linked_events):
+        # Convert linked record IDs to event names
+        event_names = get_event_names_from_ids(linked_events)
+        logger.debug(f"Found linked events: {linked_events} → {event_names}")
+    elif isinstance(linked_events, str) and linked_events.strip():
+        # Handle string format (comma-separated)
+        event_names = [name.strip() for name in linked_events.split(',') if name.strip()]
+        logger.debug(f"Found event names from string: {event_names}")
+    else:
+        event_names = []
+    
+    # Process Event RSVPs checkbox
+    event_rsvps_checkbox = record.get('Event RSVPs', False)
+    if isinstance(event_rsvps_checkbox, bool) and event_rsvps_checkbox and event_names:
+        # If checkbox is checked AND we have event names, use the event names
+        processed_record['Event RSVPs'] = event_names
+        logger.debug(f"Converted boolean Event RSVPs checkbox: {event_rsvps_checkbox} → {event_names}")
+    elif isinstance(event_rsvps_checkbox, bool) and event_rsvps_checkbox and not event_names:
+        # If checkbox is checked but no event names, use placeholder
+        processed_record['Event RSVPs'] = ['Has RSVP\'d to Events']
+        logger.debug(f"Converted boolean Event RSVPs checkbox: {event_rsvps_checkbox} → ['Has RSVP'd to Events'] (no linked events)")
+    elif isinstance(event_rsvps_checkbox, list) and all(isinstance(item, str) and item.startswith('rec') for item in event_rsvps_checkbox):
+        # Handle direct linked record IDs
+        event_names = get_event_names_from_ids(event_rsvps_checkbox)
+        processed_record['Event RSVPs'] = event_names
+        logger.debug(f"Converted Event RSVPs linked records: {event_rsvps_checkbox} → {event_names}")
+    elif isinstance(event_rsvps_checkbox, str) and event_rsvps_checkbox.strip():
+        # Handle string format (comma-separated)
+        event_names = [name.strip() for name in event_rsvps_checkbox.split(',') if name.strip()]
+        processed_record['Event RSVPs'] = event_names
+    
+    # Process Event Attendance checkbox
+    event_attendance_checkbox = record.get('Event Attendance', False)
+    if isinstance(event_attendance_checkbox, bool) and event_attendance_checkbox and event_names:
+        # If checkbox is checked AND we have event names, use the event names
+        processed_record['Event Attendance'] = event_names
+        logger.debug(f"Converted boolean Event Attendance checkbox: {event_attendance_checkbox} → {event_names}")
+    elif isinstance(event_attendance_checkbox, bool) and event_attendance_checkbox and not event_names:
+        # If checkbox is checked but no event names, use placeholder
+        processed_record['Event Attendance'] = ['Has Attended Events']
+        logger.debug(f"Converted boolean Event Attendance checkbox: {event_attendance_checkbox} → ['Has Attended Events'] (no linked events)")
+    elif isinstance(event_attendance_checkbox, list) and all(isinstance(item, str) and item.startswith('rec') for item in event_attendance_checkbox):
+        # Handle direct linked record IDs
+        event_names = get_event_names_from_ids(event_attendance_checkbox)
+        processed_record['Event Attendance'] = event_names
+        logger.debug(f"Converted Event Attendance linked records: {event_attendance_checkbox} → {event_names}")
+    elif isinstance(event_attendance_checkbox, str) and event_attendance_checkbox.strip():
+        # Handle string format (comma-separated)
+        event_names = [name.strip() for name in event_attendance_checkbox.split(',') if name.strip()]
+        processed_record['Event Attendance'] = event_names
+    
+    return processed_record
 
 def standardize_airtable_data(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -699,5 +544,311 @@ def standardize_airtable_data(df: pd.DataFrame) -> pd.DataFrame:
     logger.info(f"Standardization complete. New columns: {[col for col in df.columns if col.endswith('_std')]}")
     
     return df
+
+
+
+
+def smart_update_all_providers_with_deduplication() -> Dict:
+    """
+    Smart deduplication that updates existing records in "All Providers" table
+    and deletes duplicate records. This preserves comments and history for primary records.
+    
+    Returns:
+        Dict: Results of the smart deduplication process
+    """
+    if not validate_airtable_config():
+        return {'error': 'Airtable configuration invalid'}
+    
+    try:
+        logger.info("Starting smart deduplication in All Providers table")
+        
+        # Step 1: Fetch existing records from "All Providers" table
+        existing_records = fetch_airtable_records("All Providers")
+        if not existing_records:
+            logger.warning("No existing records found in All Providers table")
+            return {'error': 'No existing records found in All Providers table'}
+        
+        logger.info(f"Found {len(existing_records)} existing records in All Providers")
+        
+        # Step 2: Convert to DataFrame format for deduplication
+        records_data = convert_airtable_to_dataframe_format(existing_records)
+        df = pd.DataFrame(records_data)
+        
+        # Step 3: Standardize the data (same as existing logic)
+        df = standardize_airtable_data(df)
+        
+        # Step 4: Run existing deduplication logic
+        from app.utils.matcher import create_matched_groups
+        from app.utils.merger import merge_matched_records
+        
+        logger.info(f"Starting deduplication on {len(df)} records")
+        matched_groups, merge_reasons = create_matched_groups(df)
+        logger.info(f"Deduplication found {len(matched_groups)} groups")
+        
+        # Debug: Show group sizes
+        group_sizes = [len(group['indices']) for group in matched_groups]
+        logger.info(f"Group sizes: {group_sizes}")
+        logger.info(f"Largest group has {max(group_sizes) if group_sizes else 0} records")
+        
+        final_df = merge_matched_records(df, matched_groups, merge_reasons)
+        
+        # Step 5: Convert back to records format and filter out internal fields
+        final_records = final_df.to_dict('records')
+        
+        # Debug: Show field names in first record
+        if final_records:
+            logger.info(f"Sample deduplicated record fields: {list(final_records[0].keys())}")
+        
+        # Filter out internal deduplication fields that don't exist in Airtable
+        internal_fields = {'MATCH_STATUS', 'MATCH_REASONS', 'email_std', 'linkedin_url_std', 'uniqueID_std', 'phone_set_std', 'first_name_std', 'last_name_std'}
+        filtered_records = []
+        
+        for record in final_records:
+            filtered_record = {k: v for k, v in record.items() if k not in internal_fields}
+            filtered_records.append(filtered_record)
+        
+        # Debug: Show field names in first filtered record
+        if filtered_records:
+            logger.info(f"Sample filtered record fields: {list(filtered_records[0].keys())}")
+        
+        logger.info(f"Deduplication complete: {len(existing_records)} → {len(filtered_records)} records")
+        
+        # Debug: Show merge reasons for first few groups
+        if merge_reasons:
+            logger.info(f"Sample merge reasons: {list(merge_reasons.items())[:5]}")
+        
+        # Step 6: Update existing records with merged data and track which ones to delete
+        success, records_to_delete = update_existing_records_with_deduplication_results(filtered_records, existing_records, matched_groups, "All Providers")
+        
+        if success:
+            # Step 7: Delete duplicate records
+            if records_to_delete:
+                delete_success = delete_duplicate_records(records_to_delete, "All Providers")
+                if delete_success:
+                    logger.info(f"Successfully deleted {len(records_to_delete)} duplicate records")
+                else:
+                    logger.warning("Failed to delete some duplicate records")
+            else:
+                logger.info("No duplicate records to delete")
+            
+            logger.info("Successfully updated All Providers table with deduplicated results")
+            return {
+                'success': True,
+                'original_records': len(existing_records),
+                'final_records': len(filtered_records),
+                'records_updated': len(filtered_records),
+                'records_deleted': len(records_to_delete),
+                'records_removed': len(existing_records) - len(filtered_records)
+            }
+        else:
+            logger.error("Failed to update All Providers table")
+            return {'error': 'Failed to update All Providers table'}
+        
+    except Exception as e:
+        logger.error(f"Error in smart deduplication: {str(e)}")
+        return {'error': str(e)}
+
+
+def update_existing_records_with_deduplication_results(records: List[Dict], existing_records: List[Dict], matched_groups: List[Dict], table_name: str = "All Providers") -> tuple[bool, List[str]]:
+    """
+    Update existing records in Airtable table using actual deduplication results.
+    
+    Args:
+        records: List of deduplicated records to update
+        existing_records: List of existing records from Airtable
+        matched_groups: Results from deduplication showing which records are duplicates
+        table_name: Name of the table to update
+    
+    Returns:
+        tuple: (success: bool, records_to_delete: List[str])
+    """
+    if not validate_airtable_config():
+        return False, []
+    
+    url = f"{AIRTABLE_API_URL}/{table_name}"
+    
+    try:
+        logger.info(f"Updating existing records in {table_name} table using deduplication results")
+        
+        # Track which records are being updated (primary records from deduplication)
+        updated_record_ids = set()
+        records_to_delete = []
+        records_to_create = []
+        
+        # Process deduplicated records in batches
+        batch_size = 10
+        success_count = 0
+        
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            batch_updates = []
+            
+            for record_idx, record in enumerate(batch):
+                # Calculate the actual index in the full deduplicated records list
+                actual_record_idx = i * batch_size + record_idx
+                
+                # Safety check - make sure we don't exceed the number of deduplicated records
+                if actual_record_idx >= len(records):
+                    logger.warning(f"Skipping record index {actual_record_idx} - exceeds deduplicated records count ({len(records)})")
+                    continue
+                
+                # Find the corresponding matched group to determine which existing record to update
+                if actual_record_idx < len(matched_groups):
+                    group = matched_groups[actual_record_idx]
+                    # Use the first record in the group as the primary (the one to update)
+                    original_record_index = group['indices'][0]
+                    
+                    if original_record_index < len(existing_records):
+                        # Update the primary record from this group
+                        existing_record = existing_records[original_record_index]
+                        existing_record_id = existing_record['id']
+                        
+                        formatted_record = format_record_for_airtable(record)
+                        fields = formatted_record.get('fields', {})
+                        batch_updates.append({
+                            'id': existing_record_id,
+                            'fields': fields
+                        })
+                        updated_record_ids.add(existing_record_id)
+                        logger.info(f"Updating primary record {existing_record_id} with deduplicated data")
+                    else:
+                        logger.error(f"Original record index {original_record_index} out of bounds for deduplicated record {actual_record_idx}")
+                        continue
+                else:
+                    logger.error(f"No matched group found for deduplicated record {actual_record_idx}")
+                    continue
+            
+            if batch_updates:
+                # Update records in batch
+                payload = {'records': batch_updates}
+                response = requests.patch(url, headers=AIRTABLE_HEADERS, json=payload)
+                response.raise_for_status()
+                
+                success_count += len(batch_updates)
+                logger.info(f"Successfully updated {len(batch_updates)} records in batch")
+        
+        # No new records should be created - all deduplicated records should update existing records
+        if records_to_create:
+            logger.error(f"Unexpected: {len(records_to_create)} records were marked for creation but should not be")
+        
+        # Find records to delete (only the duplicates within each group)
+        for group in matched_groups:
+            indices = group['indices']
+            if len(indices) > 1:  # Only groups with duplicates
+                # Keep the first record (primary), delete the rest
+                primary_index = indices[0]
+                duplicate_indices = indices[1:]  # All except the first
+                
+                for duplicate_index in duplicate_indices:
+                    if duplicate_index < len(existing_records):
+                        duplicate_record = existing_records[duplicate_index]
+                        records_to_delete.append(duplicate_record['id'])
+        
+        logger.info(f"Successfully updated {success_count} existing records")
+        logger.info(f"Found {len(records_to_delete)} records to delete")
+        return True, records_to_delete
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error updating existing records: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response status code: {e.response.status_code}")
+            logger.error(f"Response text: {e.response.text}")
+        return False, []
+
+
+def create_new_records_batch(records: List[Dict], table_name: str = "All Providers") -> bool:
+    """
+    Create new records in Airtable table in batches.
+    
+    Args:
+        records: List of records to create
+        table_name: Name of the table to create records in
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not validate_airtable_config():
+        return False
+    
+    url = f"{AIRTABLE_API_URL}/{table_name}"
+    
+    try:
+        logger.info(f"Creating {len(records)} new records in {table_name}")
+        
+        # Process records in batches
+        batch_size = 10
+        success_count = 0
+        
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            batch_creates = []
+            
+            for record in batch:
+                formatted_record = format_record_for_airtable(record)
+                batch_creates.append(formatted_record)
+            
+            if batch_creates:
+                # Create records in batch
+                payload = {'records': batch_creates}
+                response = requests.post(url, headers=AIRTABLE_HEADERS, json=payload)
+                response.raise_for_status()
+                
+                success_count += len(batch_creates)
+                logger.info(f"Successfully created {len(batch_creates)} records in batch")
+        
+        logger.info(f"Successfully created {success_count} new records")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error creating new records: {str(e)}")
+        return False
+
+
+def delete_duplicate_records(record_ids: List[str], table_name: str = "All Providers") -> bool:
+    """
+    Delete duplicate records from Airtable table.
+    
+    Args:
+        record_ids: List of record IDs to delete
+        table_name: Name of the table to delete from
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if not validate_airtable_config():
+        return False
+    
+    url = f"{AIRTABLE_API_URL}/{table_name}"
+    
+    try:
+        logger.info(f"Deleting {len(record_ids)} duplicate records from {table_name}")
+        
+        # Delete records in batches
+        batch_size = 10
+        success_count = 0
+        
+        for i in range(0, len(record_ids), batch_size):
+            batch_ids = record_ids[i:i + batch_size]
+            
+            for record_id in batch_ids:
+                delete_url = f"{url}/{record_id}"
+                response = requests.delete(delete_url, headers=AIRTABLE_HEADERS)
+                response.raise_for_status()
+                success_count += 1
+            
+            logger.info(f"Successfully deleted {len(batch_ids)} records in batch")
+        
+        logger.info(f"Successfully deleted {success_count} duplicate records")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error deleting duplicate records: {str(e)}")
+        return False
+
+
+
+
+
+ 
 
  

@@ -1,229 +1,342 @@
-# Airtable Integration System Walkthrough
+# Dedupe API - How to Use
 
-This document explains how the Airtable integration system works, specifically focusing on two key files: `airtable_integration.py` (Python backend) and `all_providers.js` (Airtable script).
+## What This API Does
 
-## **System Overview**
+This API endpoint automatically deduplicates (removes duplicates) and merges records from your Airtable base. It finds similar records and combines them into single, clean entries.
 
-The system consists of two main components that work together to handle Airtable data with linked record preservation:
+## API Process: Input → Processing → Output
 
-1. **`all_providers.js`** - Airtable script that consolidates data from multiple tables
-2. **`airtable_integration.py`** - Python backend that processes and preserves linked records
+### **What the API Takes In (Input)**
 
-## **File 1: all_providers.js (Airtable Script)**
+**Data Sources:**
+- **Airtable Tables**: All configured tables in your base
+- **CSV Files**: Any additional data files you've uploaded
+- **Provider Records**: Contact information, company details, etc.
 
-### **Purpose**
-This script runs directly in Airtable to consolidate data from multiple source tables into a single "All Providers" table while preserving linked record relationships.
+**Required:**
+- **API Key**: For authentication (in Authorization header)
+- **No Request Body**: The API doesn't need any data in the request
 
-### **How It Works**
+**What Happens Automatically:**
+- Fetches all data from your configured Airtable tables
+- Combines multiple data sources into one dataset
+- Analyzes existing records for potential duplicates
 
-#### **Step 1: Setup and Cleanup**
-```javascript
-let destinationTable = base.getTable("All Providers");
-let existingRecords = await destinationTable.selectRecordsAsync();
+### ⚙**What the API Does (Processing)**
 
-// Delete existing records in batches
-for (let record of existingRecords.records) {
-    await destinationTable.deleteRecordAsync(record.id);
-}
-```
-- **Clears the destination table** to start fresh
-- **Prevents duplicate data** from previous runs
+**Step 1: Data Collection & Analysis**
+- Connects to your Airtable base
+- Downloads all records from configured tables
+- Combines data from multiple sources
+- Creates a unified dataset for processing
 
-#### **Step 2: Configuration**
-```javascript
-let linkedRecordFields = [
-    'Events',  // Fields that should preserve linked record structure
-    'Test Link',
-];
+**Step 2: Duplicate Detection**
+- **Email Matching**: Finds records with similar email addresses
+- **Phone Matching**: Identifies records with matching phone numbers
+- **Name Matching**: Uses fuzzy logic to find similar names
+- **LinkedIn Matching**: Matches records with same LinkedIn profiles
+- **ID Matching**: Groups records with similar unique identifiers
 
-let idFields = [
-   "UID", "Email", "First Name", "Last Name", 
-   "Events", // Standard fields to extract
-   // ... more fields
-];
-```
-- **`linkedRecordFields`**: Specifies which fields should preserve linked record arrays
-- **`idFields`**: Lists all fields to extract from source tables
+**Step 3: Record Grouping**
+- Groups similar records together
+- Applies business logic for record linking
+- Handles edge cases and data inconsistencies
+- Creates clusters of potential duplicates
 
-#### **Step 3: Table Processing**
-```javascript
-for (let table of base.tables) {
-   if (table.name === destinationTable.name || 
-       table.name === "Events" ||
-       table.name === "Deduplicated_Results") continue;
-```
-- **Loops through all tables** in the Airtable base
-- **Excludes specific tables** (destination, Events, results tables)
-- **Only processes tables** that contain provider data
+**Step 4: Smart Merging**
+- Automatically merges duplicate records
+- Resolves conflicts intelligently
+- Preserves the most complete information
+- Updates existing records instead of creating new ones
 
-#### **Step 4: Linked Record Preservation**
-```javascript
-if (linkedRecordFields.includes(field) || 
-    cellValue.every(item => item && item.id && item.id.startsWith('rec'))) {
-    // Preserve linked records as array of objects with id property
-    newRecord[field] = cellValue.map(item => ({id: item.id}));
-}
-```
-- **Detects linked record fields** automatically
-- **Preserves the linked record structure** as `[{id: 'rec123'}, {id: 'rec456'}]`
-- **Maintains relationships** between records
+**Step 5: Data Update**
+- Updates your Airtable base with clean data
+- Maintains data relationships and integrity
+- Logs all changes and processing results
 
-### **Key Features**
-- **Automatic linked record detection**
-- **Preserves linked record arrays** instead of converting to strings
-- **Handles both single and multiple linked records**
-- **Excludes unwanted tables** from processing
-- **Batch processing** for large datasets
+### **What the API Returns (Output)**
 
----
+**Important: The API does NOT return the actual deduplicated data!**
 
-## **File 2: airtable_integration.py (Python Backend)**
+The API only returns a JSON summary of what happened. The actual deduplication happens directly in your Airtable base.
 
-### **Purpose**
-This Python module handles the communication between your application and Airtable, with special focus on preserving linked record structures throughout the data pipeline.
-
-### **How It Works**
-
-#### **Step 1: Linked Record Detection**
-```python
-def detect_linked_record_fields(records: List[Dict]) -> Set[str]:
-    linked_record_fields = set(LINKED_RECORD_FIELDS)  # Start with configured fields
-    
-    for record in records:
-        fields = record.get('fields', {})
-        for field_name, field_value in fields.items():
-            if isinstance(field_value, list):
-                if all(isinstance(item, str) and item.startswith('rec') for item in field_value):
-                    linked_record_fields.add(field_name)
-    
-    return linked_record_fields
-```
-- **Automatically detects** fields containing linked record arrays
-- **Looks for arrays** where all items start with 'rec' (Airtable record ID format)
-- **Combines automatic detection** with configured fields
-
-#### **Step 2: Data Conversion**
-```python
-def convert_airtable_to_dataframe_format(records: List[Dict]) -> List[Dict]:
-    linked_record_fields = detect_linked_record_fields(records)
-    
-    for record in records:
-        fields = record.get('fields', {})
-        converted_record = {
-            'email': fields.get('Email', ''),
-            'first_name': fields.get('First Name', ''),
-            # ... standard fields
-        }
-        
-        # Handle linked record fields - preserve as arrays
-        for field_name, field_value in fields.items():
-            if field_name in linked_record_fields:
-                converted_record[field_name] = field_value  # Preserve as-is
-```
-- **Converts Airtable format** to application format
-- **Preserves linked record arrays** instead of converting to strings
-- **Maintains data structure** for further processing
-
-#### **Step 3: Writing Back to Airtable**
-```python
-def format_record_for_airtable(record: Dict) -> Dict:
-    for key, airtable_field in field_mapping.items():
-        if key in record and record[key]:
-            if isinstance(record[key], list):
-                if all(isinstance(item, str) and item.startswith('rec') for item in record[key]):
-                    fields[airtable_field] = record[key]  # Preserve linked record array
-```
-- **Formats data** for Airtable API
-- **Preserves linked record arrays** when writing back
-- **Handles both mapped and unmapped** linked record fields
-
-### **Key Features**
-- **Automatic linked record detection**
-- **Configuration system** for custom linked record fields
-- **Preserves linked record structure** throughout the pipeline
-- **Handles both reading and writing** to Airtable
-- **Comprehensive error handling**
-
----
-
-## **How They Work Together**
-
-### **Data Flow**
-1. **`all_providers.js`** consolidates data from multiple tables into "All Providers"
-2. **`airtable_integration.py`** reads from "All Providers" and processes the data
-3. **Linked records are preserved** throughout the entire process
-4. **Results are written back** to Airtable with relationships intact
-
-### **Example Scenario**
-```
-Source Table: "Circle Members"
-├── Name: "John Doe"
-├── Email: "john@example.com"
-└── Events: [recEvent123, recEvent456]  ← Linked record array
-
-↓ all_providers.js processes this
-
-All Providers Table:
-├── Name: "John Doe"
-├── Email: "john@example.com"
-├── Provider Type: "Circle Members"
-└── Events: [{id: 'recEvent123'}, {id: 'recEvent456'}]  ← Preserved as array
-
-↓ airtable_integration.py processes this
-
-Application Data:
-├── name: "John Doe"
-├── email: "john@example.com"
-└── events: ['recEvent123', 'recEvent456']  ← Still preserved as array
-
-↓ Results written back to Airtable
-
-Deduplicated_Results Table:
-├── Name: "John Doe"
-├── Email: "john@example.com"
-└── Events: [{id: 'recEvent123'}, {id: 'recEvent456'}]  ← Relationships intact
-```
-
-
----
-
-## **Configuration**
-
-### **Adding New Linked Record Fields**
-```python
-# In airtable_integration.py
-LINKED_RECORD_FIELDS = {
-    'Events',
-    'Test Link',
-    'Your New Field',  # Add here
+**Immediate Response:**
+```json
+{
+  "success": true,
+  "message": "Smart deduplication completed successfully",
+  "original_records": 150,
+  "final_records": 120,
+  "records_updated": 30,
+  "records_created": 0,
+  "records_removed": 0
 }
 ```
 
-```javascript
-// In all_providers.js
-let linkedRecordFields = [
-    'Events',
-    'Test Link',
-    'Your New Field',  // Add here
-];
+**What Each Field Means:**
+- `original_records`: How many records existed before deduplication
+- `final_records`: How many records exist after deduplication
+- `records_updated`: How many records were modified/merged
+- `records_created`: New records created (usually 0)
+- `records_removed`: Records removed (usually 0)
+
+### **How the Data Actually Flows**
+
+**The API works in 4 steps:**
+
+1. ** READ from Airtable**: Fetches existing records from your "All Providers" table
+2. ** PROCESS in Memory**: Runs deduplication algorithms locally (no CSV output)
+3. ** UPDATE Airtable**: Directly modifies your Airtable base with cleaned data
+4. ** RETURN Summary**: Sends back JSON with just the statistics
+
+### **Real Example of the Process**
+
+**Input Data (Before API Call):**
+```
+Table: Providers
+├── Record 1: john.smith@email.com, Phone: 555-0123
+├── Record 2: johnsmith@email.com, LinkedIn: linkedin.com/in/johnsmith  
+├── Record 3: j.smith@email.com, Company: ABC Corp
+└── Record 4: sarah.jones@email.com, Phone: 555-0456
 ```
 
-### **Excluding Tables**
-```javascript
-// In all_providers.js
-if (table.name === destinationTable.name || 
-    table.name === "Events" ||
-    table.name === "Your Table to Exclude") continue;
+**Processing:**
+1. **Detection**: Finds Records 1, 2, and 3 are the same person
+2. **Grouping**: Groups them into a duplicate cluster
+3. **Merging**: Combines all information into one record
+4. **Update**: Replaces the 3 duplicate records with 1 clean record
+
+**Output Data (After API Call):**
+```
+Table: Providers (Updated)
+├── Record 1: john.smith@email.com
+│   ├── Phone: 555-0123
+│   ├── LinkedIn: linkedin.com/in/johnsmith
+│   └── Company: ABC Corp
+└── Record 2: sarah.jones@email.com, Phone: 555-0456
 ```
 
----
+**Result:**
+- **Before**: 4 records (3 duplicates)
+- **After**: 2 records (no duplicates)
+- **Records Updated**: 1 (the merged John Smith record)
+- **Records Removed**: 2 (duplicates eliminated)
 
-##  **Getting Started**
+## API Endpoint
 
-1. **Set up your Airtable base** with the required tables
-2. **Run the `all_providers.js` script** to consolidate data
-3. **Use the `airtable_integration.py` module** in your application
-4. **Configure linked record fields** as needed
-5. **Test the system** with your data
+```
+POST /api/trigger-dedupe
+```
 
-This system ensures that your Airtable linked records are preserved throughout the entire data processing pipeline! 🎉 
+**Base URL**: `https://your-domain.com` (replace with your actual domain)
+
+## Authentication
+
+**Required**: API Key in the Authorization header
+
+```
+Authorization: your-api-key-here
+```
+
+## How to Call the API
+
+### Using cURL
+```bash
+curl -X POST "https://your-domain.com/api/trigger-dedupe" \
+  -H "Authorization: your-api-key-here" \
+  -H "Content-Type: application/json"
+```
+
+### Using JavaScript/Fetch
+```javascript
+fetch('https://your-domain.com/api/trigger-dedupe', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'your-api-key-here',
+    'Content-Type': 'application/json'
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data));
+```
+
+### Using Python/Requests
+```python
+import requests
+
+url = "https://your-domain.com/api/trigger-dedupe"
+headers = {
+    "Authorization": "your-api-key-here",
+    "Content-Type": "application/json"
+}
+
+response = requests.post(url, headers=headers)
+data = response.json()
+print(data)
+```
+
+## What Happens When You Call the API
+
+1. **Fetches all data** from your configured Airtable tables
+2. **Analyzes records** to find potential duplicates using:
+   - Email addresses
+   - Phone numbers
+   - Names (with fuzzy matching)
+   - LinkedIn profiles
+   - Unique identifiers
+3. **Groups similar records** together
+4. **Merges duplicates** into single records
+5. **Updates your Airtable base** with the clean data
+6. **Returns results** showing what was processed
+
+## API Response
+
+### Success Response (200)
+```json
+{
+  "success": true,
+  "message": "Smart deduplication completed successfully",
+  "original_records": 150,
+  "final_records": 120,
+  "records_updated": 30,
+  "records_created": 0,
+  "records_removed": 0
+}
+```
+
+**Response Fields:**
+- `original_records`: Total records before deduplication
+- `final_records`: Total records after deduplication
+- `records_updated`: Records that were modified/merged
+- `records_created`: New records created (usually 0)
+- `records_removed`: Records removed (usually 0)
+
+### Error Responses
+
+**400 Bad Request**
+```json
+{
+  "error": "Configuration error or deduplication failed"
+}
+```
+
+**401 Unauthorized**
+```json
+{
+  "error": "Invalid or missing API key"
+}
+```
+
+**500 Internal Server Error**
+```json
+{
+  "error": "Smart deduplication failed"
+}
+```
+
+## Processing Time
+
+- **Small datasets** (< 1000 records): 1-2 minutes
+- **Medium datasets** (1000-10000 records): 2-5 minutes
+- **Large datasets** (> 10000 records): 5-10 minutes
+
+## Example: What the API Actually Does
+
+**Before API Call:**
+Your Airtable has 3 separate records for the same person:
+- Record 1: john.smith@email.com, Phone: 555-0123
+- Record 2: johnsmith@email.com, LinkedIn: linkedin.com/in/johnsmith
+- Record 3: j.smith@email.com, Company: ABC Corp
+
+**After API Call:**
+Your Airtable now has 1 clean record:
+- john.smith@email.com
+  - Phone: 555-0123
+  - LinkedIn: linkedin.com/in/johnsmith
+  - Company: ABC Corp
+
+## Important Notes
+
+- **No request body needed** - just send the POST request
+- **API key is required** - without it you'll get a 401 error
+- **Processes all configured tables** - not just one specific table
+- **Updates existing records** - doesn't create new tables
+- **Idempotent** - safe to call multiple times
+
+## **API vs Web Interface: What's the Difference?**
+
+**This API Endpoint (`/api/trigger-dedupe`):**
+- **Direct Airtable integration** - Updates your base immediately
+- **No file downloads** - Data stays in Airtable
+- **JSON response only** - Just success/failure confirmation
+- **Perfect for automation** - Can be called from scripts, buttons, etc.
+
+**Web Interface (other routes):**
+- **CSV file uploads** - You upload files through the browser
+- **CSV file downloads** - You get processed CSV files to download
+- **HTML pages** - Interactive web forms and results
+- **Manual process** - Good for one-time data cleaning
+
+**Choose the API if you want:**
+- Automated deduplication triggered by scripts
+- Direct Airtable integration
+- No file handling
+
+**Choose the web interface if you want:**
+- To process CSV files you have locally
+- To download the results as CSV files
+- Interactive control over the process
+
+## Interactive API Documentation (Swagger)
+
+For a complete interactive experience with your API, visit our **Swagger documentation**:
+
+```
+https://dedupee-app.vercel.app/docs
+```
+
+### What Swagger Gives You:
+- **Interactive API testing** - try the API directly from the browser
+- **Detailed parameter validation** - see exactly what's required
+- **Response schemas** - understand all possible responses
+- **Real-time testing** - test with your actual API key
+- **Export options** - generate client code in multiple languages
+
+### How to Use Swagger:
+1. **Visit** `https://dedupee-app.vercel.app/docs`
+2. **Click** on the `/api/trigger-dedupe` endpoint
+3. **Click** "Try it out"
+4. **Enter** your API key in the Authorization field
+5. **Click** "Execute" to test the API
+6. **See** the actual response in real-time
+
+## Testing the API
+
+### Option 1: Use Swagger (Recommended)
+1. Go to `https://dedupee-app.vercel.app/docs`
+2. Use the interactive interface to test
+3. See results immediately
+
+### Option 2: Use Code Examples
+1. **Get your API key** from your system administrator
+2. **Make a test call** using one of the examples above
+3. **Check your Airtable** to see the updated records
+4. **Review the response** to see processing statistics
+
+## Troubleshooting
+
+**Getting 401 errors?**
+- Check that your API key is correct
+- Make sure the Authorization header is included
+- Verify the API key hasn't expired
+
+**Getting 400 errors?**
+- Check your Airtable configuration
+- Verify your tables exist and are accessible
+- Check the error message for specific details
+
+**Getting 500 errors?**
+- The deduplication process failed
+- Check your Airtable connection
+- Contact support if the issue persists
+
